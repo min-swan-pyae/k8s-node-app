@@ -33,6 +33,6 @@ test("server returns the expected greeting", async (t) => {
   const body = await response.text();
   assert.equal(
     body,
-    "Version 2.0 - Automatically deployed from GitHub!\n"
+    "This message is intentionally incorrect!\n"
   );
 });
