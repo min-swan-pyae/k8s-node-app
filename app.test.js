@@ -32,7 +32,7 @@ test("server returns the expected greeting", async (t) => {
 
   const body = await response.text();
   assert.equal(
-    body,
-    "Version 2.0 - Automatically deployed from GitHub!\n"
-  );
+  body,
+  "Version 2.1 - Tested through a Pull Request!\n"
+);
 });

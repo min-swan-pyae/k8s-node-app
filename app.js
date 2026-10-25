@@ -8,7 +8,7 @@ const server = http.createServer((req, res) => {
     "Content-Type": "text/plain",
   });
 
-  res.end("Version 2.0 - Automatically deployed from GitHub!\n");
+  res.end("Version 2.1 - Tested through a Pull Request!\n");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
