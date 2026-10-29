@@ -32,6 +32,9 @@ jobs:
       - name: Run automated tests
         run: node --test
 
+      - name: Build Docker image
+        run: docker build -t k8s-node-app:${{ github.sha }} .
+
       - name: Verify demo secret is configured
         env:
           DEMO_API_TOKEN: ${{ secrets.DEMO_API_TOKEN }}

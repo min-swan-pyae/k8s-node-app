@@ -1,9 +1,12 @@
-
 FROM node:22-alpine
 
 WORKDIR /app
 
-COPY app.js .
+COPY --chown=node:node app.js .
+
+ENV NODE_ENV=production
+
+USER node
 
 EXPOSE 3000
 
