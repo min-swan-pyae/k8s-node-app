@@ -31,3 +31,13 @@ jobs:
 
       - name: Run automated tests
         run: node --test
+
+      - name: Verify demo secret is configured
+        env:
+          DEMO_API_TOKEN: ${{ secrets.DEMO_API_TOKEN }}
+        run: |
+          if [ -z "$DEMO_API_TOKEN" ]; then
+            echo "Demo secret is missing"
+            exit 1
+          fi
+          echo "Demo secret is configured"
