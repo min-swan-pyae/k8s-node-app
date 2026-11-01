@@ -1,15 +1,19 @@
-
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 
-test("application endpoints", async (t) => {
+test("Notes API works with PostgreSQL", async (t) => {
   const port = 3100 + Math.floor(Math.random() * 1000);
 
   const serverProcess = spawn(process.execPath, ["app.js"], {
     env: {
       ...process.env,
       PORT: String(port),
+      DB_HOST: "127.0.0.1",
+      DB_PORT: "5432",
+      POSTGRES_DB: "devops_db",
+      POSTGRES_USER: "devops_user",
+      POSTGRES_PASSWORD: "devops_training_password_2026",
     },
     stdio: "ignore",
   });
@@ -18,60 +22,98 @@ test("application endpoints", async (t) => {
     serverProcess.kill();
   });
 
-  // Wait until the server is ready.
-  let response;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  let ready = false;
 
-  for (let attempt = 0; attempt < 30; attempt++) {
-    try {
-      response = await fetch(`http://127.0.0.1:${port}/`);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (serverProcess.exitCode !== null) {
       break;
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}/health`);
+
+      if (response.status === 200) {
+        ready = true;
+        break;
+      }
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
 
-  assert.ok(response, "Server should start and accept connections");
+  assert.ok(ready, "Application should start and accept connections");
 
-  // Test homepage.
-  assert.equal(response.status, 200);
+  // Test the homepage
+  const homeResponse = await fetch(baseUrl);
+  assert.equal(homeResponse.status, 200);
 
-  const homepage = await response.text();
-
+  const homeBody = await homeResponse.text();
   assert.equal(
-    homepage,
+    homeBody,
     "Version 2.1 - Tested through a Pull Request!\n"
   );
 
-  // Test application health.
-  const healthResponse = await fetch(
-    `http://127.0.0.1:${port}/health`
-  );
-
+  // Test health endpoint
+  const healthResponse = await fetch(`${baseUrl}/health`);
   assert.equal(healthResponse.status, 200);
 
   const healthData = await healthResponse.json();
+  assert.deepEqual(healthData, { status: "healthy" });
 
-  assert.deepEqual(healthData, {
-    status: "healthy",
+  // Test database connection
+  const dbResponse = await fetch(`${baseUrl}/db-check`);
+  assert.equal(dbResponse.status, 200);
+
+  const dbData = await dbResponse.json();
+  assert.equal(dbData.status, "connected");
+
+  // Create a note
+  const createResponse = await fetch(`${baseUrl}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Automated test note",
+      content: "Testing PostgreSQL integration",
+    }),
   });
 
-  // Test database endpoint without a running database.
-  const databaseResponse = await fetch(
-    `http://127.0.0.1:${port}/db-check`
+  assert.equal(createResponse.status, 201);
+
+  const createdNote = await createResponse.json();
+  assert.ok(createdNote.id);
+  assert.equal(createdNote.title, "Automated test note");
+  assert.equal(createdNote.content, "Testing PostgreSQL integration");
+
+  // Retrieve the note
+  const getResponse = await fetch(
+    `${baseUrl}/notes/${createdNote.id}`
   );
 
-  assert.equal(databaseResponse.status, 503);
+  assert.equal(getResponse.status, 200);
 
-  const databaseData = await databaseResponse.json();
+  const retrievedNote = await getResponse.json();
+  assert.equal(retrievedNote.title, "Automated test note");
 
-  assert.deepEqual(databaseData, {
-    status: "database unavailable",
-  });
+  // Retrieve all notes
+  const listResponse = await fetch(`${baseUrl}/notes`);
+  assert.equal(listResponse.status, 200);
 
-  // Test unknown routes.
-  const notFoundResponse = await fetch(
-    `http://127.0.0.1:${port}/unknown`
+  const notes = await listResponse.json();
+  assert.ok(notes.some((note) => note.id === createdNote.id));
+
+  // Delete the note
+  const deleteResponse = await fetch(
+    `${baseUrl}/notes/${createdNote.id}`,
+    { method: "DELETE" }
   );
 
-  assert.equal(notFoundResponse.status, 404);
+  assert.equal(deleteResponse.status, 200);
+
+  // Verify it no longer exists
+  const missingResponse = await fetch(
+    `${baseUrl}/notes/${createdNote.id}`
+  );
+
+  assert.equal(missingResponse.status, 404);
 });

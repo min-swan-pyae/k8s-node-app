@@ -15,6 +15,28 @@ jobs:
     name: Validate and test Node.js app
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: devops_db
+          POSTGRES_USER: devops_user
+          POSTGRES_PASSWORD: devops_training_password_2026
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devops_user -d devops_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      POSTGRES_DB: devops_db
+      POSTGRES_USER: devops_user
+      POSTGRES_PASSWORD: devops_training_password_2026
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
