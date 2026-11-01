@@ -53,6 +53,7 @@ jobs:
         run: |
           node --check app.js
           node --check app.test.js
+          node --check scripts/migrate.js
 
       - name: Run automated tests
         run: node --test

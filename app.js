@@ -1,5 +1,4 @@
-const fs = require("fs");
-const path = require("path");
+const { runMigrations } = require("./scripts/migrate");
 const http = require("http");
 const { Pool } = require("pg");
 
@@ -17,12 +16,8 @@ const pool = new Pool({
 });
 
 async function initializeDatabase() {
-  const schemaPath = path.join(__dirname, "database", "schema.sql");
-  const schema = fs.readFileSync(schemaPath, "utf8");
-
-  await pool.query(schema);
-
-  console.log("Database schema is ready");
+  await runMigrations(pool);
+  console.log("Database is ready");
 }
 
 function sendJson(res, statusCode, data) {
