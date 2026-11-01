@@ -117,3 +117,49 @@ test("Notes API works with PostgreSQL", async (t) => {
 
   assert.equal(missingResponse.status, 404);
 });
+
+
+test("database migrations are applied only once", async () => {
+  const { Pool } = require("pg");
+  const { runMigrations } = require("./scripts/migrate");
+
+  const testPool = new Pool({
+    host: "127.0.0.1",
+    port: 5432,
+    database: "devops_db",
+    user: "devops_user",
+    password: "devops_training_password_2026",
+  });
+
+  try {
+    await runMigrations(testPool);
+
+    const firstResult = await testPool.query(
+      "SELECT filename FROM schema_migrations ORDER BY filename"
+    );
+
+    assert.deepEqual(
+      firstResult.rows.map((row) => row.filename),
+      ["001_create_notes.sql", "002_add_updated_at.sql"]
+    );
+
+    await runMigrations(testPool);
+
+    const secondResult = await testPool.query(
+      "SELECT filename FROM schema_migrations ORDER BY filename"
+    );
+
+    assert.deepEqual(secondResult.rows, firstResult.rows);
+
+    const columnResult = await testPool.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'notes'
+        AND column_name = 'updated_at'
+    `);
+
+    assert.equal(columnResult.rows.length, 1);
+  } finally {
+    await testPool.end();
+  }
+});
