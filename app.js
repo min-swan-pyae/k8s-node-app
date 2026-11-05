@@ -1,8 +1,19 @@
+const express = require("express");
 const { runMigrations } = require("./scripts/migrate");
-const http = require("http");
 const { Pool } = require("pg");
-
+const os = require("os");
 const PORT = process.env.PORT || 3000;
+
+const app = express();
+
+// Trust exactly one reverse-proxy hop when explicitly enabled.
+// Enable this for the local Nginx -> Express Compose setup.
+if (process.env.TRUST_PROXY === "1") {
+  app.set("trust proxy", 1);
+}
+
+// Parse incoming JSON and limit request bodies to 10 KB.
+app.use(express.json({ limit: "10kb" }));
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -20,144 +31,212 @@ async function initializeDatabase() {
   console.log("Database is ready");
 }
 
-function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json",
-  });
-  res.end(JSON.stringify(data));
-}
+// Homepage
+app.get("/", (req, res) => {
+  res.type("text/plain").send(
+    "Version 2.1 - Tested through a Pull Request!\n"
+  );
+});
 
-async function readJson(req) {
-  let body = "";
+// Application health
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy" });
+});
 
-  for await (const chunk of req) {
-    body += chunk;
-
-    if (body.length > 10000) {
-      throw new Error("Request body too large");
-    }
-  }
-
-  return JSON.parse(body);
-}
-
-const server = http.createServer(async (req, res) => {
+// Database connection check
+app.get("/db-check", async (req, res, next) => {
   try {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-
-    if (req.method === "GET" && url.pathname === "/") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      return res.end("Version 2.1 - Tested through a Pull Request!\n");
-    }
-
-    if (req.method === "GET" && url.pathname === "/health") {
-      return sendJson(res, 200, { status: "healthy" });
-    }
-
-    if (req.method === "GET" && url.pathname === "/db-check") {
-      await pool.query("SELECT NOW()");
-      return sendJson(res, 200, { status: "connected" });
-    }
-
-    if (req.method === "POST" && url.pathname === "/notes") {
-      const { title, content } = await readJson(req);
-
-      if (
-        typeof title !== "string" ||
-        typeof content !== "string" ||
-        !title.trim() ||
-        !content.trim() ||
-        title.length > 150
-      ) {
-        return sendJson(res, 400, {
-          error: "A title (up to 150 characters) and content are required",
-        });
-      }
-
-      const result = await pool.query(
-        `INSERT INTO notes (title, content)
-         VALUES ($1, $2)
-         RETURNING id, title, content, created_at`,
-        [title.trim(), content.trim()]
-      );
-
-      return sendJson(res, 201, result.rows[0]);
-    }
-
-    if (req.method === "GET" && url.pathname === "/notes") {
-      const result = await pool.query(
-        `SELECT id, title, content, created_at
-         FROM notes
-         ORDER BY id DESC`
-      );
-
-      return sendJson(res, 200, result.rows);
-    }
-
-    const noteMatch = url.pathname.match(/^\/notes\/(\d+)$/);
-
-    if (req.method === "GET" && noteMatch) {
-      const result = await pool.query(
-        `SELECT id, title, content, created_at
-         FROM notes
-         WHERE id = $1`,
-        [noteMatch[1]]
-      );
-
-      if (result.rows.length === 0) {
-        return sendJson(res, 404, { error: "Note not found" });
-      }
-
-      return sendJson(res, 200, result.rows[0]);
-    }
-
-    if (req.method === "DELETE" && noteMatch) {
-      const result = await pool.query(
-        "DELETE FROM notes WHERE id = $1 RETURNING id",
-        [noteMatch[1]]
-      );
-
-      if (result.rows.length === 0) {
-        return sendJson(res, 404, { error: "Note not found" });
-      }
-
-      return sendJson(res, 200, { message: "Note deleted" });
-    }
-
-    return sendJson(res, 404, { error: "Route not found" });
+    await pool.query("SELECT NOW()");
+    res.json({ status: "connected" });
   } catch (error) {
-    console.error("Request error:", error.message);
-
-    if (error instanceof SyntaxError) {
-      return sendJson(res, 400, { error: "Invalid JSON" });
-    }
-
-    if (error.message === "Request body too large") {
-      return sendJson(res, 413, { error: error.message });
-    }
-
-    return sendJson(res, 500, { error: "Internal server error" });
+    next(error);
   }
+});
+
+// Reverse proxy information
+app.get("/proxy-info", (req, res) => {
+  res.json({
+    message: "Request received through Nginx",
+    hostname: req.hostname,
+    protocol: req.protocol,
+    ip: req.ip,
+    forwardedFor: req.headers["x-forwarded-for"] || null,
+    forwardedProto: req.headers["x-forwarded-proto"] || null,
+  });
+});
+
+app.get("/instance", (req, res) => {
+  res.json({
+    instance: process.env.INSTANCE_NAME || "unknown",
+    hostname: os.hostname(),
+  });
+});
+
+app.get("/slow", async (req, res) => {
+  const defaultDelay =
+    process.env.INSTANCE_NAME === "app-2" ? 15000 : 5000;
+
+  const delay =
+  req.query.delay === undefined
+    ? defaultDelay
+    : Number(req.query.delay);
+
+  if (!Number.isInteger(delay) || delay < 0 || delay > 30000) {
+    return res.status(400).json({
+      error: "Delay must be between 0 and 30000 milliseconds",
+    });
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, delay));
+
+  res.json({
+    instance: process.env.INSTANCE_NAME || "unknown",
+    hostname: os.hostname(),
+    delay,
+    message: "Slow request completed",
+  });
+});
+
+// Create a note
+app.post("/notes", async (req, res, next) => {
+  try {
+    const { title, content } = req.body || {};
+
+    if (
+      typeof title !== "string" ||
+      typeof content !== "string" ||
+      !title.trim() ||
+      !content.trim() ||
+      title.length > 150
+    ) {
+      return res.status(400).json({
+        error: "A title (up to 150 characters) and content are required",
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO notes (title, content)
+       VALUES ($1, $2)
+       RETURNING id, title, content, created_at`,
+      [title.trim(), content.trim()]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Retrieve all notes
+app.get("/notes", async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, title, content, created_at
+       FROM notes
+       ORDER BY id DESC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Retrieve one note
+app.get("/notes/:id", async (req, res, next) => {
+const id = Number(req.params.id);
+try {
+    const result = await pool.query(
+      `SELECT id, title, content, created_at
+       FROM notes
+       WHERE id = $1`,
+     [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Note not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete a note
+app.delete("/notes/:id", async (req, res, next) => {
+  const id = Number(req.params.id);
+    try {
+    const result = await pool.query(
+      "DELETE FROM notes WHERE id = $1 RETURNING id",
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Note not found" });
+    }
+
+    res.json({ message: "Note deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Handle unknown routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
+// Central error-handling middleware
+app.use((error, req, res, next) => {
+  console.error("Request error:", error.message);
+
+  if (error instanceof SyntaxError && error.status === 400) {
+    return res.status(400).json({ error: "Invalid JSON" });
+  }
+
+  if (error.type === "entity.too.large") {
+    return res.status(413).json({
+      error: "Request body too large",
+    });
+  }
+
+  res.status(500).json({ error: "Internal server error" });
 });
 
 async function startServer() {
   try {
     await initializeDatabase();
 
-    server.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on port ${PORT}`);
+    });
+
+    // Graceful shutdown
+    process.on("SIGTERM", () => {
+      console.log("SIGTERM received. Shutting down...");
+
+      server.close(async () => {
+        await pool.end();
+        console.log("Server and database pool closed");
+        process.exit(0);
+      });
+    });
+
+    process.on("SIGINT", () => {
+      console.log("SIGINT received. Shutting down...");
+
+      server.close(async () => {
+        await pool.end();
+        console.log("Server and database pool closed");
+        process.exit(0);
+      });
     });
   } catch (error) {
     console.error("Unable to initialize database:", error.message);
+    await pool.end();
     process.exit(1);
   }
 }
 
 startServer();
-
-process.on("SIGTERM", async () => {
-  server.close(async () => {
-    await pool.end();
-    process.exit(0);
-  });
-});
