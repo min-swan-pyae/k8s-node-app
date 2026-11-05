@@ -9,6 +9,7 @@ test("Notes API works with PostgreSQL", async (t) => {
     env: {
       ...process.env,
       PORT: String(port),
+      TRUST_PROXY: "0",
       DB_HOST: "127.0.0.1",
       DB_PORT: "5432",
       POSTGRES_DB: "devops_db",
@@ -19,7 +20,7 @@ test("Notes API works with PostgreSQL", async (t) => {
   });
 
   t.after(() => {
-    serverProcess.kill();
+    serverProcess.kill("SIGTERM");
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -44,7 +45,7 @@ test("Notes API works with PostgreSQL", async (t) => {
 
   assert.ok(ready, "Application should start and accept connections");
 
-  // Test the homepage
+  // Homepage
   const homeResponse = await fetch(baseUrl);
   assert.equal(homeResponse.status, 200);
 
@@ -54,19 +55,62 @@ test("Notes API works with PostgreSQL", async (t) => {
     "Version 2.1 - Tested through a Pull Request!\n"
   );
 
-  // Test health endpoint
+  // Health endpoint
   const healthResponse = await fetch(`${baseUrl}/health`);
   assert.equal(healthResponse.status, 200);
+  assert.deepEqual(await healthResponse.json(), { status: "healthy" });
 
-  const healthData = await healthResponse.json();
-  assert.deepEqual(healthData, { status: "healthy" });
-
-  // Test database connection
+  // Database connection
   const dbResponse = await fetch(`${baseUrl}/db-check`);
   assert.equal(dbResponse.status, 200);
+  assert.deepEqual(await dbResponse.json(), { status: "connected" });
 
-  const dbData = await dbResponse.json();
-  assert.equal(dbData.status, "connected");
+  // Proxy information without a trusted proxy
+  const proxyResponse = await fetch(`${baseUrl}/proxy-info`);
+  assert.equal(proxyResponse.status, 200);
+
+  const proxyData = await proxyResponse.json();
+
+  assert.equal(proxyData.message, "Request received through Nginx");
+  assert.equal(proxyData.hostname, "127.0.0.1");
+  assert.equal(proxyData.protocol, "http");
+  assert.ok(proxyData.ip);
+
+  // Invalid JSON
+  const invalidJsonResponse = await fetch(`${baseUrl}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: '{"title":',
+  });
+
+  assert.equal(invalidJsonResponse.status, 400);
+  assert.deepEqual(await invalidJsonResponse.json(), {
+    error: "Invalid JSON",
+  });
+
+// Request body exceeding the 10 KB limit
+const oversizedResponse = await fetch(`${baseUrl}/notes`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    title: "Large request",
+    content: "x".repeat(11000),
+  }),
+});
+
+assert.equal(oversizedResponse.status, 413);
+assert.deepEqual(await oversizedResponse.json(), {
+  error: "Request body too large",
+});
+
+  // Invalid note data
+  const invalidNoteResponse = await fetch(`${baseUrl}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "", content: "" }),
+  });
+
+  assert.equal(invalidNoteResponse.status, 400);
 
   // Create a note
   const createResponse = await fetch(`${baseUrl}/notes`, {
@@ -81,6 +125,7 @@ test("Notes API works with PostgreSQL", async (t) => {
   assert.equal(createResponse.status, 201);
 
   const createdNote = await createResponse.json();
+
   assert.ok(createdNote.id);
   assert.equal(createdNote.title, "Automated test note");
   assert.equal(createdNote.content, "Testing PostgreSQL integration");
@@ -116,8 +161,14 @@ test("Notes API works with PostgreSQL", async (t) => {
   );
 
   assert.equal(missingResponse.status, 404);
-});
 
+  // Unknown route
+  const unknownResponse = await fetch(`${baseUrl}/unknown`);
+  assert.equal(unknownResponse.status, 404);
+  assert.deepEqual(await unknownResponse.json(), {
+    error: "Route not found",
+  });
+});
 
 test("database migrations are applied only once", async () => {
   const { Pool } = require("pg");
