@@ -13,9 +13,10 @@ backups
 coverage
 .nyc_output
 
-Dockerfile*
 docker-compose*
 compose.y*ml
 
 README.md
 .gitignore
+
+.secrets/

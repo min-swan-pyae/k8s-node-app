@@ -1,6 +1,9 @@
+
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+
+const MIGRATION_LOCK_KEY = 741852963;
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -14,8 +17,17 @@ const pool = new Pool({
 
 async function runMigrations(databasePool) {
   const client = await databasePool.connect();
+  let lockAcquired = false;
 
   try {
+    // Serialize migration execution across application replicas.
+    await client.query("SELECT pg_advisory_lock($1)", [
+      MIGRATION_LOCK_KEY,
+    ]);
+    lockAcquired = true;
+
+    console.log("Acquired database migration lock");
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -73,6 +85,17 @@ async function runMigrations(databasePool) {
 
     console.log("Database migrations completed");
   } finally {
+    if (lockAcquired) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [
+          MIGRATION_LOCK_KEY,
+        ]);
+        console.log("Released database migration lock");
+      } catch (error) {
+        console.error("Failed to release migration lock:", error.message);
+      }
+    }
+
     client.release();
   }
 }
