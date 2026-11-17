@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: notes-app
+
+resources:
+  - canary-nginx.yaml
+
+configMapGenerator:
+  - name: notes-api-nginx-config
+    files:
+      - nginx-canary/nginx.conf
+    options:
+      disableNameSuffixHash: true

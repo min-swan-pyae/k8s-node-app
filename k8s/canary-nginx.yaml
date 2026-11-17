@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notes-api-nginx-canary
+  namespace: notes-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notes-api-nginx-canary
+  template:
+    metadata:
+      labels:
+        app: notes-api-nginx-canary
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: notes-api-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notes-api-nginx-canary
+  namespace: notes-app
+spec:
+  type: ClusterIP
+  selector:
+    app: notes-api-nginx-canary
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
