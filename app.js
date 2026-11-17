@@ -43,6 +43,15 @@ app.get("/health", (req, res) => {
   res.json({ status: "healthy" });
 });
 
+app.get("/version", (req, res) => {
+  res.json({
+    application: "notes-api",
+    version: process.env.APP_VERSION || "development",
+    instance: process.env.INSTANCE_NAME || "unknown",
+    environment: process.env.NODE_ENV || "development",
+  });
+});
+
 // Database connection check
 app.get("/db-check", async (req, res, next) => {
   try {

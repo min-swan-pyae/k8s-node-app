@@ -70,3 +70,46 @@ jobs:
             exit 1
           fi
           echo "Demo secret is configured"
+  validate-kubernetes:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.34.0"
+      - name: Install Kubeconform
+        run: |
+          curl -fL -o /tmp/kubeconform.tar.gz \
+            "https://sourceforge.net/projects/kubeconform.mirror/files/v0.8.0/kubeconform-linux-amd64.tar.gz/download"
+
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  /tmp/kubeconform.tar.gz" | sha256sum -c -
+
+          mkdir -p /tmp/kubeconform-install
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp/kubeconform-install
+          sudo install -m 755 /tmp/kubeconform-install/kubeconform /usr/local/bin/kubeconform
+
+      - name: Build Kubernetes manifests with Kustomize
+        run: kubectl kustomize k8s/ > /tmp/rendered-manifests.yaml
+
+      - name: Verify rendered manifests are not empty
+        run: |
+          if [ ! -s /tmp/rendered-manifests.yaml ]; then
+            echo "Kustomize generated an empty manifest"
+            exit 1
+          fi
+          echo "Kustomize successfully generated Kubernetes manifests"
+
+      - name: Validate Kustomize resources
+        run: kubeconform -strict -summary /tmp/rendered-manifests.yaml
+
+      - name: Validate Blue-Green and Canary resources
+        run: |
+          kubeconform -strict -summary \
+            k8s/blue-green.yaml \
+            k8s/canary.yaml \
+            k8s/canary-nginx.yaml
